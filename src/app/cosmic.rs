@@ -142,7 +142,7 @@ where
             crate::surface::Action::AppSubsurface(settings, view) => {
                 let Some(settings) = std::sync::Arc::try_unwrap(settings)
                     .ok()
-                    .and_then(|s| s.downcast::<Box<dyn Fn(&mut T) -> iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings + Send + Sync>>().ok()) else {
+                    .and_then(|s| s.downcast::<Box<dyn Fn(&mut T) -> iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings + Send + Sync + 'static>>().ok()) else {
                     tracing::error!("Invalid settings for subsurface");
                     return Task::none();
                     };
@@ -151,7 +151,8 @@ where
                     match std::sync::Arc::try_unwrap(view).ok()?.downcast::<Box<
                         dyn for<'a> Fn(&'a T) -> Element<'a, crate::Action<T::Message>>
                             + Send
-                            + Sync,
+                            + Sync
+                            + 'static,
                     >>() {
                         Ok(v) => Some(v),
                         Err(err) => {
@@ -172,14 +173,14 @@ where
             crate::surface::Action::Subsurface(settings, view) => {
                 let Some(settings) = std::sync::Arc::try_unwrap(settings)
                     .ok()
-                    .and_then(|s| s.downcast::<Box<dyn Fn() -> iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings + Send + Sync>>().ok()) else {
+                    .and_then(|s| s.downcast::<Box<dyn Fn() -> iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings + Send + Sync + 'static>>().ok()) else {
                     tracing::error!("Invalid settings for subsurface");
                     return Task::none();
                 };
 
                 if let Some(view) = view.and_then(|view| {
                     match std::sync::Arc::try_unwrap(view).ok()?.downcast::<Box<
-                            dyn Fn() -> Element<'static, crate::Action<T::Message>> + Send + Sync,
+                            dyn Fn() -> Element<'static, crate::Action<T::Message>> + Send + Sync + 'static,
                         >>() {
                             Ok(v) => Some(v),
                             Err(err) => {
@@ -200,7 +201,7 @@ where
             crate::surface::Action::AppPopup(settings, view) => {
                 let Some(settings) = std::sync::Arc::try_unwrap(settings)
                     .ok()
-                    .and_then(|s| s.downcast::<Box<dyn Fn(&mut T) -> iced_runtime::platform_specific::wayland::popup::SctkPopupSettings + Send + Sync>>().ok()) else {
+                    .and_then(|s| s.downcast::<Box<dyn Fn(&mut T) -> iced_runtime::platform_specific::wayland::popup::SctkPopupSettings + Send + Sync + 'static>>().ok()) else {
                     tracing::error!("Invalid settings for popup");
                     return Task::none();
                 };
@@ -209,7 +210,8 @@ where
                     match std::sync::Arc::try_unwrap(view).ok()?.downcast::<Box<
                         dyn for<'a> Fn(&'a T) -> Element<'a, crate::Action<T::Message>>
                             + Send
-                            + Sync,
+                            + Sync
+                            + 'static,
                     >>() {
                         Ok(v) => Some(v),
                         Err(err) => {
@@ -248,14 +250,14 @@ where
             crate::surface::Action::Popup(settings, view) => {
                 let Some(settings) = std::sync::Arc::try_unwrap(settings)
                     .ok()
-                    .and_then(|s| s.downcast::<Box<dyn Fn() -> iced_runtime::platform_specific::wayland::popup::SctkPopupSettings + Send + Sync>>().ok()) else {
+                    .and_then(|s| s.downcast::<Box<dyn Fn() -> iced_runtime::platform_specific::wayland::popup::SctkPopupSettings + Send + Sync + 'static>>().ok()) else {
                     tracing::error!("Invalid settings for popup");
                     return Task::none();
                 };
 
                 if let Some(view) = view.and_then(|view| {
                     match std::sync::Arc::try_unwrap(view).ok()?.downcast::<Box<
-                            dyn Fn() -> Element<'static, crate::Action<T::Message>> + Send + Sync,
+                            dyn Fn() -> Element<'static, crate::Action<T::Message>> + Send + Sync + 'static,
                         >>() {
                             Ok(v) => Some(v),
                             Err(err) => {
@@ -274,7 +276,7 @@ where
             #[cfg(feature = "wayland")]
             crate::surface::Action::AppWindow(id, settings, view) => {
                 let Some(settings) = std::sync::Arc::try_unwrap(settings).ok().and_then(|s| {
-                    s.downcast::<Box<dyn Fn(&mut T) -> iced::window::Settings + Send + Sync>>()
+                    s.downcast::<Box<dyn Fn(&mut T) -> iced::window::Settings + Send + Sync + 'static>>()
                         .ok()
                 }) else {
                     tracing::error!("Invalid settings for AppWindow");
@@ -285,7 +287,8 @@ where
                     match std::sync::Arc::try_unwrap(view).ok()?.downcast::<Box<
                         dyn for<'a> Fn(&'a T) -> Element<'a, crate::Action<T::Message>>
                             + Send
-                            + Sync,
+                            + Sync
+                            + 'static,
                     >>() {
                         Ok(v) => Some(v),
                         Err(err) => {
@@ -313,7 +316,7 @@ where
             #[cfg(feature = "wayland")]
             crate::surface::Action::Window(id, settings, view) => {
                 let Some(settings) = std::sync::Arc::try_unwrap(settings).ok().and_then(|s| {
-                    s.downcast::<Box<dyn Fn() -> iced::window::Settings + Send + Sync>>()
+                    s.downcast::<Box<dyn Fn() -> iced::window::Settings + Send + Sync + 'static>>()
                         .ok()
                 }) else {
                     tracing::error!("Invalid settings for Window");
@@ -322,7 +325,7 @@ where
 
                 if let Some(view) = view.and_then(|view| {
                     match std::sync::Arc::try_unwrap(view).ok()?.downcast::<Box<
-                            dyn Fn() -> Element<'static, crate::Action<T::Message>> + Send + Sync,
+                            dyn Fn() -> Element<'static, crate::Action<T::Message>> + Send + Sync + 'static,
                         >>() {
                             Ok(v) => Some(v),
                             Err(err) => {
