@@ -30,18 +30,27 @@ use std::sync::Arc;
 use cosmic::widget;
 use cosmic::Element;
 
-use crate::loaders::fallback::{fallback_view, load_fallback};
-use crate::loaders::folder::{folder_view, load_folder};
-use crate::loaders::image::{decode_image, decode_image_scaled, get_image_info, is_jpeg_file};
+// Import viewer crates
+#[cfg(feature = "image")]
+use cosmic_view_image::ImageViewer;
+#[cfg(feature = "text")]
+use cosmic_view_text::TextViewer;
+#[cfg(feature = "directory")]
+use cosmic_view_directory::DirectoryViewer;
+#[cfg(feature = "fallback")]
+use cosmic_view_fallback::FallbackViewer;
+use cosmic_view_types::{ContentViewer, LoadConfig};
+
+// PDF loader (not yet moved to its own crate)
 #[cfg(feature = "pdf")]
 use crate::loaders::pdf::{get_pdf_info, render_pdf_pages_limited};
 use crate::loaders::pdf::PdfInfo;
-use crate::loaders::svg::load_svg_file;
-use crate::loaders::text::load_text_file;
+
+// 3D model support
 #[cfg(feature = "view3d")]
 use cosmic_view_3d::{load_model, SceneData};
-use crate::types::{ContentFit, LoadedContent, SyntaxBuffer};
-use crate::widgets::syntax_text;
+
+use crate::types::{ContentFit, LoadedContent};
 use crate::util::mime::detect_mime;
 use super::details::generate_details;
 
@@ -105,26 +114,38 @@ impl Previewer {
     }
 
     /// Internal content loading.
-    /// Each loader is responsible for its own file size limits.
-    /// When pdf/view3d features are disabled, those file types route to fallback.
+    /// Delegates to viewer crates via ContentViewer trait.
     fn load_content(
         path: &Path,
         kind: PreviewKind,
         config: &PreviewConfig,
     ) -> (LoadedContent, Option<ModelScene>) {
         match kind {
+            #[cfg(feature = "image")]
             PreviewKind::Image => Self::load_image(path, config),
+            #[cfg(feature = "image")]
             PreviewKind::Svg => Self::load_svg(path, config),
+            #[cfg(feature = "text")]
             PreviewKind::Text => Self::load_text(path, config),
             PreviewKind::Pdf => Self::load_pdf(path, config),
             PreviewKind::Model3D => Self::load_model_content(path),
+            #[cfg(feature = "directory")]
             PreviewKind::Directory => Self::load_folder_content(path),
+            #[cfg(feature = "fallback")]
             PreviewKind::Fallback => Self::load_fallback_content(path),
+            // When features are disabled, route to fallback
+            #[cfg(not(feature = "image"))]
+            PreviewKind::Image | PreviewKind::Svg => Self::load_fallback_content(path),
+            #[cfg(not(feature = "text"))]
+            PreviewKind::Text => Self::load_fallback_content(path),
+            #[cfg(not(feature = "directory"))]
+            PreviewKind::Directory => Self::load_fallback_content(path),
+            #[cfg(not(feature = "fallback"))]
+            PreviewKind::Fallback => (LoadedContent::Error("Fallback viewer not available".to_string()), None),
         }
     }
 
-    // Individual loader methods
-    // Each loader checks its own file size limits
+    // Individual loader methods using viewer crates
 
     fn check_file_size(path: &Path, config: &PreviewConfig) -> Result<(), String> {
         if let Ok(metadata) = std::fs::metadata(path) {
@@ -139,92 +160,62 @@ impl Previewer {
         Ok(())
     }
 
+    #[cfg(feature = "image")]
     fn load_image(path: &Path, config: &PreviewConfig) -> (LoadedContent, Option<ModelScene>) {
         if let Err(e) = Self::check_file_size(path, config) {
             return (LoadedContent::Error(e), None);
         }
 
-        // Get base image info (original dimensions)
-        let base_info = match get_image_info(path) {
-            Ok(info) => info,
-            Err(e) => {
-                return (
-                    LoadedContent::Error(format!("Failed to get image info: {}", e)),
-                    None,
-                )
-            }
+        let load_config = LoadConfig {
+            max_file_size: Some(config.max_file_size),
+            max_dimension: if config.max_preview_dimension > 0 {
+                Some(config.max_preview_dimension)
+            } else {
+                None
+            },
+            is_dark_theme: cosmic::theme::active().theme_type.is_dark(),
         };
 
-        // Determine max dimension for scaled decode (0 = no scaling)
-        let max_dim = if config.max_preview_dimension > 0 {
-            Some(config.max_preview_dimension)
-        } else {
-            None
-        };
-
-        // Use scaled decode for faster loading of large images
-        match decode_image_scaled(path, max_dim) {
-            Ok(result) => {
-                let (width, height) = (result.image.width(), result.image.height());
-                let pixels = result.image.into_raw();
-                let handle = widget::image::Handle::from_rgba(width, height, pixels);
-
-                // Update info with actual displayed dimensions and preview status
-                let info = crate::types::ImageInfo {
-                    is_preview: result.is_scaled,
-                    displayed_width: width,
-                    displayed_height: height,
-                    ..base_info
-                };
-
-                if result.is_scaled {
-                    tracing::debug!(
-                        "Loaded scaled preview: {}x{} -> {}x{} (is_jpeg: {})",
-                        result.original_width,
-                        result.original_height,
-                        width,
-                        height,
-                        is_jpeg_file(path)
-                    );
+        // Use ImageViewer from cosmic-view-image (blocking call since we're in spawn_blocking)
+        let rt = tokio::runtime::Handle::current();
+        match rt.block_on(ImageViewer::load(path, &load_config)) {
+            Ok((content, info)) => {
+                match content {
+                    cosmic_view_image::ImageContent::Raster { handle } => {
+                        (LoadedContent::Raster { handle, info }, None)
+                    }
+                    cosmic_view_image::ImageContent::Svg { handle } => {
+                        (LoadedContent::Svg { handle, info }, None)
+                    }
                 }
-
-                (LoadedContent::Raster { handle, info }, None)
             }
-            Err(e) => (
-                LoadedContent::Error(format!("Failed to load image: {}", e)),
-                None,
-            ),
+            Err(e) => (LoadedContent::Error(format!("Failed to load image: {}", e.0)), None),
         }
     }
 
+    #[cfg(feature = "image")]
     fn load_svg(path: &Path, config: &PreviewConfig) -> (LoadedContent, Option<ModelScene>) {
-        if let Err(e) = Self::check_file_size(path, config) {
-            return (LoadedContent::Error(e), None);
-        }
-
-        match load_svg_file(path) {
-            Ok((handle, info)) => (LoadedContent::Svg { handle, info }, None),
-            Err(e) => (
-                LoadedContent::Error(format!("Failed to load SVG: {}", e)),
-                None,
-            ),
-        }
+        // SVG loading is handled by ImageViewer
+        Self::load_image(path, config)
     }
 
+    #[cfg(feature = "text")]
     fn load_text(path: &Path, config: &PreviewConfig) -> (LoadedContent, Option<ModelScene>) {
         if let Err(e) = Self::check_file_size(path, config) {
             return (LoadedContent::Error(e), None);
         }
 
-        let theme = cosmic::theme::active();
-        let is_dark = theme.theme_type.is_dark();
+        let load_config = LoadConfig {
+            max_file_size: Some(config.max_file_size),
+            max_dimension: None,
+            is_dark_theme: cosmic::theme::active().theme_type.is_dark(),
+        };
 
-        match load_text_file(path, is_dark) {
-            Ok((buffer, info)) => (LoadedContent::Text { buffer, info }, None),
-            Err(e) => (
-                LoadedContent::Error(format!("Failed to load text: {}", e)),
-                None,
-            ),
+        // Use TextViewer from cosmic-view-text
+        let rt = tokio::runtime::Handle::current();
+        match rt.block_on(TextViewer::load(path, &load_config)) {
+            Ok((content, info)) => (LoadedContent::Text { content, info }, None),
+            Err(e) => (LoadedContent::Error(format!("Failed to load text: {}", e.0)), None),
         }
     }
 
@@ -303,24 +294,38 @@ impl Previewer {
         Self::load_fallback_content(path)
     }
 
+    #[cfg(feature = "directory")]
     fn load_folder_content(path: &Path) -> (LoadedContent, Option<ModelScene>) {
-        match load_folder(path) {
-            Ok((icon_handle, info)) => (LoadedContent::Folder { icon_handle, info }, None),
-            Err(e) => (
-                LoadedContent::Error(format!("Failed to load folder: {}", e)),
-                None,
-            ),
+        let load_config = LoadConfig::default();
+
+        // Use DirectoryViewer from cosmic-view-directory
+        let rt = tokio::runtime::Handle::current();
+        match rt.block_on(DirectoryViewer::load(path, &load_config)) {
+            Ok((content, info)) => (LoadedContent::Folder { content, info }, None),
+            Err(e) => (LoadedContent::Error(format!("Failed to load folder: {}", e.0)), None),
         }
     }
 
+    #[cfg(not(feature = "directory"))]
+    fn load_folder_content(_path: &Path) -> (LoadedContent, Option<ModelScene>) {
+        (LoadedContent::Error("Directory viewer not available".to_string()), None)
+    }
+
+    #[cfg(feature = "fallback")]
     fn load_fallback_content(path: &Path) -> (LoadedContent, Option<ModelScene>) {
-        match load_fallback(path) {
-            Ok((icon_handle, info)) => (LoadedContent::Fallback { icon_handle, info }, None),
-            Err(e) => (
-                LoadedContent::Error(format!("Failed to load fallback: {}", e)),
-                None,
-            ),
+        let load_config = LoadConfig::default();
+
+        // Use FallbackViewer from cosmic-view-fallback
+        let rt = tokio::runtime::Handle::current();
+        match rt.block_on(FallbackViewer::load(path, &load_config)) {
+            Ok((content, info)) => (LoadedContent::Fallback { content, info }, None),
+            Err(e) => (LoadedContent::Error(format!("Failed to load fallback: {}", e.0)), None),
         }
+    }
+
+    #[cfg(not(feature = "fallback"))]
+    fn load_fallback_content(_path: &Path) -> (LoadedContent, Option<ModelScene>) {
+        (LoadedContent::Error("Fallback viewer not available".to_string()), None)
     }
 
     // ------------------------------------------------------------------------
@@ -349,15 +354,18 @@ impl Previewer {
                 crate::widgets::loading_indicator().into()
             }
 
+            #[cfg(feature = "image")]
             LoadedContent::Raster { handle, .. } => {
                 Self::image_view(handle.clone(), state.content_fit(), bg_alpha)
             }
 
+            #[cfg(feature = "image")]
             LoadedContent::Svg { handle, .. } => {
                 Self::svg_view(handle.clone(), state.content_fit(), bg_alpha)
             }
 
-            LoadedContent::Text { buffer, .. } => Self::text_view(buffer, bg_alpha),
+            #[cfg(feature = "text")]
+            LoadedContent::Text { content, .. } => Self::text_view(content, bg_alpha),
 
             LoadedContent::Pdf { pages, info } => Self::pdf_view(pages, info, bg_alpha),
 
@@ -370,9 +378,31 @@ impl Previewer {
                 }
             }
 
-            LoadedContent::Fallback { icon_handle, info } => fallback_view(icon_handle, info),
+            #[cfg(feature = "fallback")]
+            LoadedContent::Fallback { content, info } => {
+                FallbackViewer::view(
+                    content,
+                    info,
+                    state.transform(),
+                    &cosmic_view_types::ViewConfig {
+                        background_alpha: bg_alpha,
+                        content_fit: state.content_fit(),
+                    },
+                )
+            }
 
-            LoadedContent::Folder { icon_handle, info } => folder_view(icon_handle, info),
+            #[cfg(feature = "directory")]
+            LoadedContent::Folder { content, info } => {
+                DirectoryViewer::view(
+                    content,
+                    info,
+                    state.transform(),
+                    &cosmic_view_types::ViewConfig {
+                        background_alpha: bg_alpha,
+                        content_fit: state.content_fit(),
+                    },
+                )
+            }
 
             LoadedContent::Error(msg) => Self::error_view(msg),
         }
@@ -380,15 +410,13 @@ impl Previewer {
 
     // View helper methods
 
+    #[cfg(feature = "image")]
     fn image_view<'a, M: 'static>(
         handle: widget::image::Handle,
         fit: ContentFit,
         _bg_alpha: f32,
     ) -> Element<'a, M> {
-        let content_fit = match fit {
-            ContentFit::Contain => cosmic::iced::ContentFit::Contain,
-            ContentFit::Cover => cosmic::iced::ContentFit::Cover,
-        };
+        let content_fit: cosmic::iced::ContentFit = fit.into();
         widget::container(widget::image(handle).content_fit(content_fit))
             .width(cosmic::iced::Length::Fill)
             .height(cosmic::iced::Length::Fill)
@@ -397,15 +425,13 @@ impl Previewer {
             .into()
     }
 
+    #[cfg(feature = "image")]
     fn svg_view<'a, M: 'static>(
         handle: widget::svg::Handle,
         fit: ContentFit,
         _bg_alpha: f32,
     ) -> Element<'a, M> {
-        let content_fit = match fit {
-            ContentFit::Contain => cosmic::iced::ContentFit::Contain,
-            ContentFit::Cover => cosmic::iced::ContentFit::Cover,
-        };
+        let content_fit: cosmic::iced::ContentFit = fit.into();
         widget::container(widget::svg(handle).content_fit(content_fit))
             .width(cosmic::iced::Length::Fill)
             .height(cosmic::iced::Length::Fill)
@@ -414,9 +440,10 @@ impl Previewer {
             .into()
     }
 
-    fn text_view<'a, M: Clone + 'static>(buffer: &'a SyntaxBuffer, _bg_alpha: f32) -> Element<'a, M> {
-        // Use the syntax-highlighted text widget
-        syntax_text(buffer.buffer_ref()).into()
+    #[cfg(feature = "text")]
+    fn text_view<'a, M: Clone + 'static>(content: &'a cosmic_view_text::TextContent, _bg_alpha: f32) -> Element<'a, M> {
+        // Use the syntax-highlighted text widget from cosmic-view-text
+        cosmic_view_text::syntax_text(&content.buffer).into()
     }
 
     fn pdf_view<'a, M: 'static>(
@@ -819,11 +846,17 @@ impl Previewer {
     ///
     /// Returns true if the image was loaded at reduced resolution and a full-resolution
     /// version can be loaded in the background.
+    #[cfg(feature = "image")]
     pub fn is_preview_image(state: &PreviewState) -> bool {
         match state.content() {
             LoadedContent::Raster { info, .. } => info.is_preview,
             _ => false,
         }
+    }
+
+    #[cfg(not(feature = "image"))]
+    pub fn is_preview_image(_state: &PreviewState) -> bool {
+        false
     }
 
     /// Load full resolution version of a scaled preview image asynchronously.
@@ -832,14 +865,7 @@ impl Previewer {
     /// version in the background. When complete, update the state with the result.
     ///
     /// Returns None if the current content is not a scaled preview image.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// if Previewer::is_preview_image(&state) {
-    ///     let task = Previewer::load_full_resolution(&state);
-    ///     // Handle the async result when ready...
-    /// }
-    /// ```
+    #[cfg(feature = "image")]
     pub async fn load_full_resolution(state: &PreviewState) -> Option<LoadedContent> {
         // Check if this is a scaled preview image
         let (path, base_info) = match state.content() {
@@ -864,39 +890,50 @@ impl Previewer {
         }
     }
 
+    #[cfg(not(feature = "image"))]
+    pub async fn load_full_resolution(_state: &PreviewState) -> Option<LoadedContent> {
+        None
+    }
+
     /// Blocking version of full resolution loading (for use in spawn_blocking).
+    #[cfg(feature = "image")]
     fn load_full_resolution_blocking(
         path: &std::path::Path,
-        base_info: crate::types::ImageInfo,
+        base_info: cosmic_view_image::ImageInfo,
     ) -> LoadedContent {
-        // Decode at full resolution (no scaling)
-        match decode_image(path, None) {
-            Ok(img) => {
-                let rgba = img.to_rgba8();
-                let (width, height) = (rgba.width(), rgba.height());
-                let pixels = rgba.into_raw();
-                let handle = widget::image::Handle::from_rgba(width, height, pixels);
+        let load_config = LoadConfig {
+            max_file_size: None,
+            max_dimension: None, // No scaling - full resolution
+            is_dark_theme: false,
+        };
 
-                // Update info to reflect full resolution
-                let info = crate::types::ImageInfo {
-                    is_preview: false,
-                    displayed_width: width,
-                    displayed_height: height,
-                    ..base_info
-                };
+        // Use ImageViewer for full resolution load
+        let rt = tokio::runtime::Handle::current();
+        match rt.block_on(ImageViewer::load(path, &load_config)) {
+            Ok((content, mut info)) => {
+                // Preserve the original dimensions from base_info
+                info.width = base_info.width;
+                info.height = base_info.height;
+                info.is_preview = false;
 
-                tracing::debug!(
-                    "Loaded full resolution: {}x{} for {}",
-                    width,
-                    height,
-                    path.display()
-                );
-
-                LoadedContent::Raster { handle, info }
+                match content {
+                    cosmic_view_image::ImageContent::Raster { handle } => {
+                        tracing::debug!(
+                            "Loaded full resolution: {}x{} for {}",
+                            info.displayed_width,
+                            info.displayed_height,
+                            path.display()
+                        );
+                        LoadedContent::Raster { handle, info }
+                    }
+                    cosmic_view_image::ImageContent::Svg { handle } => {
+                        LoadedContent::Svg { handle, info }
+                    }
+                }
             }
             Err(e) => {
-                tracing::error!("Failed to decode full resolution: {}", e);
-                LoadedContent::Error(format!("Failed to load full resolution: {}", e))
+                tracing::error!("Failed to decode full resolution: {}", e.0);
+                LoadedContent::Error(format!("Failed to load full resolution: {}", e.0))
             }
         }
     }
@@ -947,20 +984,6 @@ impl Previewer {
     /// # Returns
     /// * `Ok((width, height, pixels))` - RGBA pixels at the final size
     /// * `Err(error)` - Error description if rendering failed
-    ///
-    /// # Example
-    /// ```ignore
-    /// use view_core::{Previewer, ThumbnailRenderConfig};
-    ///
-    /// let config = ThumbnailRenderConfig {
-    ///     min_size: 128,
-    ///     max_size: 256,
-    ///     themed: false, // Theme-independent for caching
-    ///     ..Default::default()
-    /// };
-    /// let (width, height, pixels) = Previewer::render_thumbnail(path, &config)?;
-    /// // Save to freedesktop thumbnail cache...
-    /// ```
     pub fn render_thumbnail(
         path: &Path,
         config: &super::types::ThumbnailRenderConfig,
@@ -994,20 +1017,54 @@ impl Previewer {
     }
 
     /// Render a raster image to thumbnail pixels.
+    #[cfg(feature = "image")]
     fn render_image_thumbnail(
         path: &Path,
         config: &super::types::ThumbnailRenderConfig,
     ) -> Result<(u32, u32, Vec<u8>), String> {
-        use crate::loaders::image::decode_image;
+        // Use cosmic-view-image's decode function
+        let load_config = LoadConfig {
+            max_file_size: Some(config.max_file_size),
+            max_dimension: None, // Load full for thumbnail generation
+            is_dark_theme: false,
+        };
 
-        let img = decode_image(path, None)
-            .map_err(|e| format!("Failed to decode image: {}", e))?;
+        let rt = tokio::runtime::Handle::current();
+        let (content, info) = rt.block_on(ImageViewer::load(path, &load_config))
+            .map_err(|e| format!("Failed to decode image: {}", e.0))?;
 
-        let (orig_w, orig_h) = (img.width(), img.height());
-        let (target_w, target_h) = Self::calculate_thumbnail_size(orig_w, orig_h, config);
+        // Get the raw pixels from the handle
+        match content {
+            cosmic_view_image::ImageContent::Raster { handle } => {
+                // Create a thumbnail from the image data
+                let (orig_w, orig_h) = (info.displayed_width, info.displayed_height);
+                let (target_w, target_h) = Self::calculate_thumbnail_size(orig_w, orig_h, config);
 
-        let thumbnail = img.thumbnail(target_w, target_h).into_rgba8();
-        Ok((thumbnail.width(), thumbnail.height(), thumbnail.into_raw()))
+                // For thumbnail, we need to resize. The handle contains the pixel data
+                // but we need to access it differently. Let's use the image crate directly.
+                // Note: This is a simplification - in practice we'd extract from the handle
+                if let cosmic::widget::image::Handle::Rgba { width, height, pixels, .. } = handle {
+                    if let Some(img) = image::RgbaImage::from_raw(width, height, pixels.to_vec()) {
+                        let img = image::DynamicImage::ImageRgba8(img);
+                        let thumbnail = img.thumbnail(target_w, target_h).into_rgba8();
+                        return Ok((thumbnail.width(), thumbnail.height(), thumbnail.into_raw()));
+                    }
+                }
+                Err("Failed to extract pixels from image handle".to_string())
+            }
+            cosmic_view_image::ImageContent::Svg { .. } => {
+                // SVG should be handled separately
+                Self::render_svg_thumbnail(path, config)
+            }
+        }
+    }
+
+    #[cfg(not(feature = "image"))]
+    fn render_image_thumbnail(
+        _path: &Path,
+        _config: &super::types::ThumbnailRenderConfig,
+    ) -> Result<(u32, u32, Vec<u8>), String> {
+        Err("Image thumbnail support requires the 'image' feature".to_string())
     }
 
     /// Render an SVG to thumbnail pixels.

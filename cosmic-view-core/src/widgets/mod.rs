@@ -1,7 +1,7 @@
 //! Custom widgets for view-core.
+//!
+//! The syntax_text widget has been moved to cosmic-view-text.
 
 mod loading_indicator;
-mod syntax_text;
 
 pub use loading_indicator::loading_indicator;
-pub use syntax_text::syntax_text;

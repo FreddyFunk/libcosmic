@@ -62,7 +62,6 @@
 
 mod loaders;
 mod preview_api;
-pub mod syntax;
 mod types;
 mod util;
 mod widgets;
@@ -106,7 +105,7 @@ pub use preview_api::{PreviewState, Previewer};
 // ============================================================================
 
 /// Content-specific types used by LoadedContent and viewers.
-pub use types::{HighlightedText, LoadedContent, StyledSpan, SyntaxBuffer};
+pub use types::LoadedContent;
 
 // Re-export types from viewer crates when features are enabled
 #[cfg(feature = "image")]
