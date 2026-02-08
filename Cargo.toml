@@ -217,6 +217,7 @@ members = [
     "cosmic-config",
     "cosmic-config-derive",
     "cosmic-theme",
+    "cosmic-view-core",
     "examples/*",
 ]
 exclude = ["iced"]
