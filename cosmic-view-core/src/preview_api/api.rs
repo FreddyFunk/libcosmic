@@ -984,8 +984,7 @@ impl Previewer {
         let mime_info = detect_mime(path);
 
         match mime_info.category {
-            FileCategory::Image => Self::render_image_thumbnail(path, config),
-            FileCategory::Svg => Self::render_svg_thumbnail(path, config),
+            FileCategory::Image | FileCategory::Svg => Self::render_image_thumbnail(path, config),
             FileCategory::Pdf => Self::render_pdf_thumbnail(path, config),
             FileCategory::Model3D => Self::render_model_thumbnail(path, config),
             FileCategory::Text | FileCategory::Directory | FileCategory::Unknown => {
@@ -994,47 +993,13 @@ impl Previewer {
         }
     }
 
-    /// Render a raster image to thumbnail pixels.
+    /// Render an image (raster or SVG) to thumbnail pixels.
     #[cfg(feature = "image")]
     fn render_image_thumbnail(
         path: &Path,
         config: &super::types::ThumbnailRenderConfig,
     ) -> Result<(u32, u32, Vec<u8>), String> {
-        // Use cosmic-view-image's decode function
-        let load_config = LoadConfig {
-            max_file_size: Some(config.max_file_size),
-            max_dimension: None, // Load full for thumbnail generation
-            is_dark_theme: false,
-        };
-
-        let rt = tokio::runtime::Handle::current();
-        let (content, info) = rt.block_on(ImageViewer::load(path, &load_config))
-            .map_err(|e| format!("Failed to decode image: {}", e.0))?;
-
-        // Get the raw pixels from the handle
-        match content {
-            cosmic_view_image::ImageContent::Raster { handle } => {
-                // Create a thumbnail from the image data
-                let (orig_w, orig_h) = (info.displayed_width, info.displayed_height);
-                let (target_w, target_h) = Self::calculate_thumbnail_size(orig_w, orig_h, config);
-
-                // For thumbnail, we need to resize. The handle contains the pixel data
-                // but we need to access it differently. Let's use the image crate directly.
-                // Note: This is a simplification - in practice we'd extract from the handle
-                if let cosmic::widget::image::Handle::Rgba { width, height, pixels, .. } = handle {
-                    if let Some(img) = image::RgbaImage::from_raw(width, height, pixels.to_vec()) {
-                        let img = image::DynamicImage::ImageRgba8(img);
-                        let thumbnail = img.thumbnail(target_w, target_h).into_rgba8();
-                        return Ok((thumbnail.width(), thumbnail.height(), thumbnail.into_raw()));
-                    }
-                }
-                Err("Failed to extract pixels from image handle".to_string())
-            }
-            cosmic_view_image::ImageContent::Svg { .. } => {
-                // SVG should be handled separately
-                Self::render_svg_thumbnail(path, config)
-            }
-        }
+        cosmic_view_image::render_thumbnail(path, config.max_size)
     }
 
     #[cfg(not(feature = "image"))]
@@ -1045,41 +1010,8 @@ impl Previewer {
         Err("Image thumbnail support requires the 'image' feature".to_string())
     }
 
-    /// Render an SVG to thumbnail pixels.
-    fn render_svg_thumbnail(
-        path: &Path,
-        config: &super::types::ThumbnailRenderConfig,
-    ) -> Result<(u32, u32, Vec<u8>), String> {
-        // For SVG, we use resvg to render to pixels
-        let data = std::fs::read(path)
-            .map_err(|e| format!("Failed to read SVG: {}", e))?;
-
-        let options = usvg::Options::default();
-        let tree = usvg::Tree::from_data(&data, &options)
-            .map_err(|e| format!("Failed to parse SVG: {}", e))?;
-
-        let size = tree.size();
-        let (orig_w, orig_h) = (size.width() as u32, size.height() as u32);
-        let (target_w, target_h) = Self::calculate_thumbnail_size(orig_w.max(1), orig_h.max(1), config);
-
-        let mut pixmap = tiny_skia::Pixmap::new(target_w, target_h)
-            .ok_or_else(|| "Failed to create pixmap".to_string())?;
-
-        let scale_x = target_w as f32 / size.width();
-        let scale_y = target_h as f32 / size.height();
-        let scale = scale_x.min(scale_y);
-
-        resvg::render(
-            &tree,
-            tiny_skia::Transform::from_scale(scale, scale),
-            &mut pixmap.as_mut(),
-        );
-
-        Ok((target_w, target_h, pixmap.take()))
-    }
-
     /// Render a PDF first page to thumbnail pixels.
-    #[cfg(feature = "pdf")]
+    #[cfg(all(feature = "pdf", feature = "image"))]
     fn render_pdf_thumbnail(
         path: &Path,
         config: &super::types::ThumbnailRenderConfig,
@@ -1089,21 +1021,19 @@ impl Previewer {
         // Render first page at 0.5 scale, then resize if needed
         let (width, height, pixels) = render_pdf_page(path, 0, 0.5)?;
 
-        // If within bounds, return as-is
-        if width <= config.max_size && height <= config.max_size
-            && width >= config.min_size && height >= config.min_size
-        {
-            return Ok((width, height, pixels));
-        }
+        // Resize using cosmic-view-image's utility
+        cosmic_view_image::resize_rgba(width, height, pixels, config.max_size)
+    }
 
-        // Resize to fit bounds
-        let img = image::RgbaImage::from_raw(width, height, pixels)
-            .ok_or_else(|| "Failed to create image from PDF pixels".to_string())?;
-        let img = image::DynamicImage::ImageRgba8(img);
+    #[cfg(all(feature = "pdf", not(feature = "image")))]
+    fn render_pdf_thumbnail(
+        path: &Path,
+        _config: &super::types::ThumbnailRenderConfig,
+    ) -> Result<(u32, u32, Vec<u8>), String> {
+        use crate::loaders::pdf::render_pdf_page;
 
-        let (target_w, target_h) = Self::calculate_thumbnail_size(width, height, config);
-        let thumbnail = img.thumbnail(target_w, target_h).into_rgba8();
-        Ok((thumbnail.width(), thumbnail.height(), thumbnail.into_raw()))
+        // Without image feature, just return the rendered page without resizing
+        render_pdf_page(path, 0, 0.5)
     }
 
     #[cfg(not(feature = "pdf"))]
@@ -1143,38 +1073,5 @@ impl Previewer {
         _config: &super::types::ThumbnailRenderConfig,
     ) -> Result<(u32, u32, Vec<u8>), String> {
         Err("3D model thumbnail support requires the 'view3d' feature".to_string())
-    }
-
-    /// Calculate thumbnail dimensions maintaining aspect ratio within bounds.
-    fn calculate_thumbnail_size(
-        orig_w: u32,
-        orig_h: u32,
-        config: &super::types::ThumbnailRenderConfig,
-    ) -> (u32, u32) {
-        let aspect = orig_w as f32 / orig_h as f32;
-        let max = config.max_size as f32;
-
-        let (w, h) = if aspect > 1.0 {
-            // Wider than tall
-            (max, max / aspect)
-        } else {
-            // Taller than wide (or square)
-            (max * aspect, max)
-        };
-
-        // Ensure we're at least min_size on the smaller dimension
-        let min = config.min_size as f32;
-        let (w, h) = if w < min && h < min {
-            // Both too small, scale up
-            if aspect > 1.0 {
-                (min * aspect, min)
-            } else {
-                (min, min / aspect)
-            }
-        } else {
-            (w, h)
-        };
-
-        (w.round() as u32, h.round() as u32)
     }
 }

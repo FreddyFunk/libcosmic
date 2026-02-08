@@ -826,6 +826,118 @@ fn decode_image_scaled(
 }
 
 // ============================================================================
+// Thumbnail Rendering
+// ============================================================================
+
+/// Render an image file to thumbnail pixels.
+///
+/// Handles both raster images and SVGs. Returns (width, height, rgba_pixels).
+///
+/// # Arguments
+/// * `path` - Path to the image file
+/// * `max_size` - Maximum dimension for the thumbnail
+pub fn render_thumbnail(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u8>), String> {
+    let format = detect_format_verified(path);
+
+    if format.is_svg() {
+        render_svg_thumbnail(path, max_size)
+    } else {
+        render_raster_thumbnail(path, max_size)
+    }
+}
+
+/// Render a raster image to thumbnail pixels.
+fn render_raster_thumbnail(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u8>), String> {
+    // Decode at scaled size if possible
+    let result = decode_image_scaled(path, Some(max_size))?;
+
+    let (orig_w, orig_h) = (result.original_width, result.original_height);
+    let (target_w, target_h) = calculate_thumbnail_size(orig_w, orig_h, max_size);
+
+    // If already at target size or smaller, return as-is
+    let img = result.image;
+    if img.width() <= target_w && img.height() <= target_h {
+        return Ok((img.width(), img.height(), img.into_raw()));
+    }
+
+    // Resize to target dimensions
+    let img = DynamicImage::ImageRgba8(img);
+    let thumbnail = img.thumbnail(target_w, target_h).into_rgba8();
+    Ok((thumbnail.width(), thumbnail.height(), thumbnail.into_raw()))
+}
+
+/// Render an SVG to thumbnail pixels using resvg.
+fn render_svg_thumbnail(path: &Path, max_size: u32) -> Result<(u32, u32, Vec<u8>), String> {
+    let data = std::fs::read(path)
+        .map_err(|e| format!("Failed to read SVG: {}", e))?;
+
+    let options = usvg::Options::default();
+    let tree = usvg::Tree::from_data(&data, &options)
+        .map_err(|e| format!("Failed to parse SVG: {}", e))?;
+
+    let size = tree.size();
+    let (orig_w, orig_h) = (size.width() as u32, size.height() as u32);
+    let (target_w, target_h) = calculate_thumbnail_size(orig_w.max(1), orig_h.max(1), max_size);
+
+    let mut pixmap = tiny_skia::Pixmap::new(target_w, target_h)
+        .ok_or_else(|| "Failed to create pixmap".to_string())?;
+
+    let scale_x = target_w as f32 / size.width();
+    let scale_y = target_h as f32 / size.height();
+    let scale = scale_x.min(scale_y);
+
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+
+    Ok((target_w, target_h, pixmap.take()))
+}
+
+/// Calculate thumbnail dimensions maintaining aspect ratio.
+fn calculate_thumbnail_size(orig_w: u32, orig_h: u32, max_size: u32) -> (u32, u32) {
+    if orig_w <= max_size && orig_h <= max_size {
+        return (orig_w, orig_h);
+    }
+
+    let aspect = orig_w as f64 / orig_h as f64;
+    if orig_w > orig_h {
+        let w = max_size;
+        let h = (max_size as f64 / aspect).round() as u32;
+        (w, h.max(1))
+    } else {
+        let h = max_size;
+        let w = (max_size as f64 * aspect).round() as u32;
+        (w.max(1), h)
+    }
+}
+
+/// Resize raw RGBA pixels to a new size.
+///
+/// Useful for resizing pixels from other sources (e.g., PDF rendering).
+/// Returns (new_width, new_height, new_pixels).
+pub fn resize_rgba(
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    max_size: u32,
+) -> Result<(u32, u32, Vec<u8>), String> {
+    // If already within bounds, return as-is
+    if width <= max_size && height <= max_size {
+        return Ok((width, height, pixels));
+    }
+
+    let img = RgbaImage::from_raw(width, height, pixels)
+        .ok_or_else(|| "Failed to create image from pixels".to_string())?;
+    let img = DynamicImage::ImageRgba8(img);
+
+    let (target_w, target_h) = calculate_thumbnail_size(width, height, max_size);
+    let thumbnail = img.thumbnail(target_w, target_h).into_rgba8();
+    Ok((thumbnail.width(), thumbnail.height(), thumbnail.into_raw()))
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
