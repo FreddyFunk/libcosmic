@@ -1,0 +1,21 @@
+[package]
+name = "cosmic-view-text"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Text file viewer with syntax highlighting for COSMIC desktop applications"
+
+[dependencies]
+cosmic-view-types = { path = "../cosmic-view-types" }
+cosmic-text = { git = "https://github.com/pop-os/cosmic-text.git", features = ["syntect"] }
+syntect = { version = "5.2.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+two-face = "0.4"
+cosmic-syntax-theme = { git = "https://github.com/pop-os/cosmic-syntax-theme.git" }
+tokio = { version = "1.48", features = ["rt", "sync"] }
+tracing = "0.1"
+
+[dependencies.cosmic]
+package = "libcosmic"
+path = ".."
+default-features = false
+features = ["tokio", "wgpu"]

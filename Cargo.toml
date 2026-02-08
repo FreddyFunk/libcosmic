@@ -217,6 +217,11 @@ members = [
     "cosmic-config",
     "cosmic-config-derive",
     "cosmic-theme",
+    "cosmic-view-types",
+    "cosmic-view-directory",
+    "cosmic-view-fallback",
+    "cosmic-view-text",
+    "cosmic-view-image",
     "cosmic-view-core",
     "examples/*",
 ]

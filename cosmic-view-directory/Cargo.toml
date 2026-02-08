@@ -1,0 +1,17 @@
+[package]
+name = "cosmic-view-directory"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Directory/folder viewer for COSMIC desktop applications"
+
+[dependencies]
+cosmic-view-types = { path = "../cosmic-view-types" }
+tokio = { version = "1.48", features = ["rt", "sync"] }
+tracing = "0.1"
+
+[dependencies.cosmic]
+package = "libcosmic"
+path = ".."
+default-features = false
+features = ["tokio", "wgpu"]

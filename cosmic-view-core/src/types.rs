@@ -1,4 +1,8 @@
 //! Core types for the preview library
+//!
+//! This module contains content-specific types used by the preview system.
+//! Shared types like `ContentFit` and `ViewTransform` are re-exported from
+//! `cosmic_view_types`.
 
 use crate::loaders::pdf::PdfInfo;
 use cosmic_text::Buffer;
@@ -8,15 +12,8 @@ use cosmic::iced::Color;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Content fit mode for image scaling
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ContentFit {
-    /// Fit image within bounds, preserving aspect ratio (letterbox)
-    #[default]
-    Contain,
-    /// Fill bounds completely, preserving aspect ratio (crop)
-    Cover,
-}
+// Re-export shared types from cosmic-view-types
+pub use cosmic_view_types::{ContentFit, ViewTransform};
 
 /// Supported image formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -236,78 +233,6 @@ impl std::fmt::Debug for SyntaxBuffer {
         f.debug_struct("SyntaxBuffer")
             .field("content_len", &self.content.len())
             .finish_non_exhaustive()
-    }
-}
-
-/// Transform state for zoom and pan
-#[derive(Debug, Clone, Copy)]
-pub struct ViewTransform {
-    /// Zoom level (1.0 = 100%, min 0.1, max 10.0)
-    pub zoom: f32,
-    /// Horizontal pan offset in pixels
-    pub offset_x: f32,
-    /// Vertical pan offset in pixels
-    pub offset_y: f32,
-}
-
-impl Default for ViewTransform {
-    fn default() -> Self {
-        Self {
-            zoom: 1.0,
-            offset_x: 0.0,
-            offset_y: 0.0,
-        }
-    }
-}
-
-impl ViewTransform {
-    /// Minimum allowed zoom level
-    pub const MIN_ZOOM: f32 = 0.1;
-    /// Maximum allowed zoom level
-    pub const MAX_ZOOM: f32 = 10.0;
-    /// Zoom step for keyboard/button controls
-    pub const ZOOM_STEP: f32 = 0.25;
-
-    /// Create a new transform with default values
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Reset transform to default (no zoom, no pan)
-    pub fn reset(&mut self) {
-        *self = Self::default();
-    }
-
-    /// Zoom in by one step
-    pub fn zoom_in(&mut self) {
-        self.zoom = (self.zoom + Self::ZOOM_STEP).min(Self::MAX_ZOOM);
-    }
-
-    /// Zoom out by one step
-    pub fn zoom_out(&mut self) {
-        self.zoom = (self.zoom - Self::ZOOM_STEP).max(Self::MIN_ZOOM);
-    }
-
-    /// Set zoom level, clamping to valid range
-    pub fn set_zoom(&mut self, zoom: f32) {
-        self.zoom = zoom.clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
-    }
-
-    /// Apply scroll wheel zoom at a specific point
-    pub fn scroll_zoom(&mut self, delta: f32, _cursor_x: f32, _cursor_y: f32) {
-        let factor = if delta > 0.0 { 1.1 } else { 0.9 };
-        self.zoom = (self.zoom * factor).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
-    }
-
-    /// Pan by a delta amount
-    pub fn pan(&mut self, delta_x: f32, delta_y: f32) {
-        self.offset_x += delta_x;
-        self.offset_y += delta_y;
-    }
-
-    /// Format zoom level for display (e.g., "150%")
-    pub fn format_zoom(&self) -> String {
-        format!("{}%", (self.zoom * 100.0).round() as i32)
     }
 }
 

@@ -68,6 +68,27 @@ mod util;
 mod widgets;
 
 // ============================================================================
+// Re-exports from cosmic-view-types (foundation crate)
+// ============================================================================
+
+pub use cosmic_view_types::{
+    // Shared types
+    ContentFit, ViewTransform,
+    // Preview kinds and config
+    PreviewKind, PreviewConfig, ThumbnailRenderConfig,
+    // Actions
+    ActionId, ActionState, PreviewAction,
+    // Details
+    DetailItem, DetailSection, PreviewDetails,
+    // Messages
+    PreviewMessage,
+    // Viewer trait and types
+    ContentViewer, ViewerError, LoadConfig, ViewConfig,
+    // Formatting utilities
+    format_file_size, format_modified,
+};
+
+// ============================================================================
 // Public API - Primary Interface
 // ============================================================================
 
@@ -78,20 +99,40 @@ mod widgets;
 /// - [`Previewer::view`] - Get a widget for rendering
 /// - [`Previewer::render_thumbnail`] - Generate raw pixels for thumbnail caching
 /// - [`Previewer::actions`] / [`Previewer::details`] - Get available actions and file details
-pub use preview_api::{
-    ActionId, ActionState, DetailItem, DetailSection, PreviewAction, PreviewConfig, PreviewDetails,
-    PreviewKind, PreviewMessage, PreviewState, Previewer, ThumbnailRenderConfig,
-};
+pub use preview_api::{PreviewState, Previewer};
 
 // ============================================================================
 // Public API - Content Types
 // ============================================================================
 
-/// Content and state types used by PreviewState.
-pub use types::{
-    ContentFit, FallbackInfo, FolderInfo, HighlightedText, ImageFormat, ImageInfo, LoadedContent,
-    StyledSpan, SyntaxBuffer, TextInfo, ViewTransform,
-};
+/// Content-specific types used by LoadedContent and viewers.
+pub use types::{HighlightedText, LoadedContent, StyledSpan, SyntaxBuffer};
+
+// Re-export types from viewer crates when features are enabled
+#[cfg(feature = "image")]
+pub use cosmic_view_image::{ImageContent, ImageFormat, ImageInfo};
+
+#[cfg(feature = "text")]
+pub use cosmic_view_text::{TextContent, TextInfo};
+
+#[cfg(feature = "directory")]
+pub use cosmic_view_directory::{DirectoryContent, FolderInfo};
+
+#[cfg(feature = "fallback")]
+pub use cosmic_view_fallback::{FallbackContent, FallbackInfo};
+
+// Re-export viewer crates for direct access
+#[cfg(feature = "image")]
+pub use cosmic_view_image::{self as view_image, ImageViewer};
+
+#[cfg(feature = "text")]
+pub use cosmic_view_text::{self as view_text, TextViewer};
+
+#[cfg(feature = "directory")]
+pub use cosmic_view_directory::{self as view_directory, DirectoryViewer};
+
+#[cfg(feature = "fallback")]
+pub use cosmic_view_fallback::{self as view_fallback, FallbackViewer};
 
 /// PDF document information.
 pub use loaders::pdf::PdfInfo;

@@ -1,0 +1,21 @@
+[package]
+name = "cosmic-view-image"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Image viewer with raster and SVG support for COSMIC desktop applications"
+
+[dependencies]
+cosmic-view-types = { path = "../cosmic-view-types" }
+image = { version = "0.25.9", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "rayon"] }
+jpeg-decoder = "0.3"
+jxl-oxide = { version = "0.12.5", features = ["image"] }
+rayon = "1.10"
+tokio = { version = "1.48", features = ["rt", "sync"] }
+tracing = "0.1"
+
+[dependencies.cosmic]
+package = "libcosmic"
+path = ".."
+default-features = false
+features = ["tokio", "wgpu"]
