@@ -14,7 +14,7 @@
 //! let state = Previewer::load_sync("/path/to/file.jpg", config);
 //!
 //! // Get the widget for rendering
-//! let widget = Previewer::view(&state, |msg| MyAppMessage::Preview(msg));
+//! let widget = Previewer::view(&state);
 //!
 //! // Get available actions for the View menu
 //! let actions = Previewer::actions(&state);
@@ -337,18 +337,9 @@ impl Previewer {
     /// The widget is self-contained and handles mouse interaction internally
     /// (zoom, pan, 3D rotation). Apps should embed this widget directly.
     ///
-    /// # Type Parameters
-    /// * `M` - The app's message type
-    ///
     /// # Arguments
     /// * `state` - The preview state to render
-    /// * `map_message` - Function to map `PreviewMessage` to the app's message type
-    pub fn view<'a, M: Clone + 'static>(
-        state: &'a PreviewState,
-        _map_message: impl Fn(PreviewMessage) -> M + 'a,
-    ) -> Element<'a, M> {
-        let bg_alpha = state.background_alpha();
-
+    pub fn view<'a, M: Clone + 'static>(state: &'a PreviewState) -> Element<'a, M> {
         match state.content() {
             LoadedContent::NotLoaded | LoadedContent::Loading => {
                 crate::widgets::loading_indicator().into()
@@ -356,23 +347,23 @@ impl Previewer {
 
             #[cfg(feature = "image")]
             LoadedContent::Raster { handle, .. } => {
-                Self::image_view(handle.clone(), state.content_fit(), bg_alpha)
+                Self::image_view(handle.clone(), state.content_fit())
             }
 
             #[cfg(feature = "image")]
             LoadedContent::Svg { handle, .. } => {
-                Self::svg_view(handle.clone(), state.content_fit(), bg_alpha)
+                Self::svg_view(handle.clone(), state.content_fit())
             }
 
             #[cfg(feature = "text")]
-            LoadedContent::Text { content, .. } => Self::text_view(content, bg_alpha),
+            LoadedContent::Text { content, .. } => Self::text_view(content),
 
-            LoadedContent::Pdf { pages, info } => Self::pdf_view(pages, info, bg_alpha),
+            LoadedContent::Pdf { pages, .. } => Self::pdf_view(pages),
 
             #[cfg(feature = "view3d")]
             LoadedContent::Model3D { .. } => {
                 if let Some(scene) = state.model_scene() {
-                    Self::model_view(scene.clone(), state.model_config(), bg_alpha)
+                    Self::model_view(scene.clone(), state.model_config(), state.background_alpha())
                 } else {
                     Self::error_view("Failed to initialize 3D scene")
                 }
@@ -385,7 +376,7 @@ impl Previewer {
                     info,
                     state.transform(),
                     &cosmic_view_types::ViewConfig {
-                        background_alpha: bg_alpha,
+                        background_alpha: state.background_alpha(),
                         content_fit: state.content_fit(),
                     },
                 )
@@ -398,7 +389,7 @@ impl Previewer {
                     info,
                     state.transform(),
                     &cosmic_view_types::ViewConfig {
-                        background_alpha: bg_alpha,
+                        background_alpha: state.background_alpha(),
                         content_fit: state.content_fit(),
                     },
                 )
@@ -411,11 +402,7 @@ impl Previewer {
     // View helper methods
 
     #[cfg(feature = "image")]
-    fn image_view<'a, M: 'static>(
-        handle: widget::image::Handle,
-        fit: ContentFit,
-        _bg_alpha: f32,
-    ) -> Element<'a, M> {
+    fn image_view<'a, M: 'static>(handle: widget::image::Handle, fit: ContentFit) -> Element<'a, M> {
         let content_fit: cosmic::iced::ContentFit = fit.into();
         widget::container(widget::image(handle).content_fit(content_fit))
             .width(cosmic::iced::Length::Fill)
@@ -426,11 +413,7 @@ impl Previewer {
     }
 
     #[cfg(feature = "image")]
-    fn svg_view<'a, M: 'static>(
-        handle: widget::svg::Handle,
-        fit: ContentFit,
-        _bg_alpha: f32,
-    ) -> Element<'a, M> {
+    fn svg_view<'a, M: 'static>(handle: widget::svg::Handle, fit: ContentFit) -> Element<'a, M> {
         let content_fit: cosmic::iced::ContentFit = fit.into();
         widget::container(widget::svg(handle).content_fit(content_fit))
             .width(cosmic::iced::Length::Fill)
@@ -441,16 +424,11 @@ impl Previewer {
     }
 
     #[cfg(feature = "text")]
-    fn text_view<'a, M: Clone + 'static>(content: &'a cosmic_view_text::TextContent, _bg_alpha: f32) -> Element<'a, M> {
-        // Use the syntax-highlighted text widget from cosmic-view-text
+    fn text_view<'a, M: Clone + 'static>(content: &'a cosmic_view_text::TextContent) -> Element<'a, M> {
         cosmic_view_text::syntax_text(&content.buffer).into()
     }
 
-    fn pdf_view<'a, M: 'static>(
-        pages: &[widget::image::Handle],
-        _info: &PdfInfo,
-        _bg_alpha: f32,
-    ) -> Element<'a, M> {
+    fn pdf_view<'a, M: 'static>(pages: &[widget::image::Handle]) -> Element<'a, M> {
         // Show all pages in a scrollable view, centered horizontally
         let mut column = widget::column()
             .spacing(16)

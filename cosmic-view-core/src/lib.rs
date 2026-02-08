@@ -19,7 +19,7 @@
 //! let state = Previewer::load("/path/to/file.jpg", PreviewConfig::default()).await;
 //!
 //! // Get a widget for rendering
-//! let widget = Previewer::view(&state, |msg| MyAppMessage::Preview(msg));
+//! let widget = Previewer::view(&state);
 //!
 //! // Get available actions and details
 //! let actions = Previewer::actions(&state);

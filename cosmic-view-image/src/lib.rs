@@ -208,38 +208,22 @@ impl ContentViewer for ImageViewer {
     fn view<'a, M: Clone + 'static>(
         content: &'a Self::Content,
         _info: &'a Self::Info,
-        transform: &ViewTransform,
+        _transform: &ViewTransform,
         config: &ViewConfig,
     ) -> Element<'a, M> {
         let content_fit = config.content_fit;
 
         match content {
             ImageContent::Raster { handle } => {
-                // Build the image widget
                 let image_widget = widget::image(handle.clone())
                     .content_fit(content_fit.into());
 
-                // Apply zoom/pan transforms
-                if transform.zoom != 1.0 || transform.offset_x != 0.0 || transform.offset_y != 0.0 {
-                    // Use a container with transforms for zoom/pan
-                    let zoomed = widget::container(image_widget)
-                        .width(cosmic::iced::Length::Shrink)
-                        .height(cosmic::iced::Length::Shrink);
-
-                    widget::container(zoomed)
-                        .width(cosmic::iced::Length::Fill)
-                        .height(cosmic::iced::Length::Fill)
-                        .align_x(cosmic::iced::alignment::Horizontal::Center)
-                        .align_y(cosmic::iced::alignment::Vertical::Center)
-                        .into()
-                } else {
-                    widget::container(image_widget)
-                        .width(cosmic::iced::Length::Fill)
-                        .height(cosmic::iced::Length::Fill)
-                        .align_x(cosmic::iced::alignment::Horizontal::Center)
-                        .align_y(cosmic::iced::alignment::Vertical::Center)
-                        .into()
-                }
+                widget::container(image_widget)
+                    .width(cosmic::iced::Length::Fill)
+                    .height(cosmic::iced::Length::Fill)
+                    .align_x(cosmic::iced::alignment::Horizontal::Center)
+                    .align_y(cosmic::iced::alignment::Vertical::Center)
+                    .into()
             }
             ImageContent::Svg { handle } => {
                 let svg_widget = widget::svg(handle.clone())
@@ -497,7 +481,7 @@ fn detect_format_verified(path: &Path) -> ImageFormat {
 // ============================================================================
 
 /// Get the dimensions of an image without fully decoding it.
-pub fn get_image_dimensions(path: &Path) -> Option<(u32, u32)> {
+fn get_image_dimensions(path: &Path) -> Option<(u32, u32)> {
     if is_jxl_file(path) {
         get_jxl_dimensions(path)
     } else {
@@ -546,17 +530,6 @@ fn get_jxl_dimensions(path: &Path) -> Option<(u32, u32)> {
 // Image Decoding
 // ============================================================================
 
-/// Decode an image file to a DynamicImage.
-///
-/// Handles all supported formats including JXL transparently.
-pub fn decode_image(path: &Path, max_alloc: Option<u64>) -> Result<DynamicImage, String> {
-    if is_jxl_file(path) {
-        decode_jxl_image(path, max_alloc)
-    } else {
-        decode_standard_image(path, max_alloc)
-    }
-}
-
 /// Decode a standard image format (non-JXL)
 fn decode_standard_image(path: &Path, max_alloc: Option<u64>) -> Result<DynamicImage, String> {
     let reader = ImageReader::open(path)
@@ -595,35 +568,12 @@ fn decode_jxl_image(path: &Path, max_alloc: Option<u64>) -> Result<DynamicImage,
         .map_err(|e| format!("Failed to decode JXL {}: {}", path.display(), e))
 }
 
-/// Get image info (metadata) without fully decoding the image
-pub fn get_image_info(path: &Path) -> Result<ImageInfo, String> {
-    let file_size = std::fs::metadata(path)
-        .map(|m| m.len())
-        .map_err(|e| format!("Failed to read file metadata: {}", e))?;
-
-    let format = detect_format_verified(path);
-
-    let (width, height) =
-        get_image_dimensions(path).ok_or_else(|| "Failed to read image dimensions".to_string())?;
-
-    Ok(ImageInfo {
-        path: path.to_path_buf(),
-        width,
-        height,
-        format,
-        file_size,
-        is_preview: false,
-        displayed_width: width,
-        displayed_height: height,
-    })
-}
-
 // ============================================================================
 // Optimized JPEG Decoding with DCT Scaling
 // ============================================================================
 
 /// Check if the file is a JPEG by reading magic bytes
-pub fn is_jpeg_file(path: &Path) -> bool {
+fn is_jpeg_file(path: &Path) -> bool {
     matches!(detect_format_by_magic_bytes(path), Some(ImageFormat::Jpeg))
 }
 
@@ -658,7 +608,7 @@ fn calculate_jpeg_scale_factor(original: u32, target: u32) -> u16 {
 /// because it skips processing high-frequency DCT coefficients.
 ///
 /// Returns the RGBA image and whether it was scaled (true) or full resolution (false).
-pub fn decode_jpeg_scaled(
+fn decode_jpeg_scaled(
     path: &Path,
     max_dimension: Option<u32>,
 ) -> Result<(RgbaImage, bool), String> {
@@ -720,12 +670,6 @@ pub fn decode_jpeg_scaled(
         .ok_or_else(|| "Failed to create RGBA image from decoded pixels".to_string())?;
 
     Ok((rgba_image, scaled))
-}
-
-/// Decode a JPEG at full resolution (no scaling).
-pub fn decode_jpeg_full(path: &Path) -> Result<RgbaImage, String> {
-    let (image, _) = decode_jpeg_scaled(path, None)?;
-    Ok(image)
 }
 
 /// Convert jpeg-decoder pixel data to RGBA format.
@@ -823,7 +767,7 @@ pub struct ScaledDecodeResult {
 /// For other formats, decodes at full resolution then downscales if needed.
 ///
 /// Returns the image, original dimensions, and whether it was scaled.
-pub fn decode_image_scaled(
+fn decode_image_scaled(
     path: &Path,
     max_dimension: Option<u32>,
 ) -> Result<ScaledDecodeResult, String> {
