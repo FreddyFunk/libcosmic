@@ -7,7 +7,7 @@
 //! - Detail and action types for UI integration
 //! - Formatting utilities
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use cosmic::Element;
 
@@ -122,10 +122,6 @@ pub enum PreviewKind {
     Svg,
     /// Text/code file
     Text,
-    /// PDF document
-    Pdf,
-    /// 3D model (glTF, FBX, OBJ, STL, etc.)
-    Model3D,
     /// Directory
     Directory,
     /// Unsupported file type (shows icon + metadata)
@@ -151,16 +147,6 @@ pub enum ActionId {
     // 2D content actions
     /// Reset zoom to fit content in viewport
     FitPage,
-
-    // 3D model actions
-    /// Toggle texture rendering
-    ToggleTextures,
-    /// Toggle solid mesh rendering
-    ToggleMesh,
-    /// Toggle wireframe overlay
-    ToggleWireframe,
-    /// Reset camera to default view
-    ResetCamera,
 }
 
 /// Current state of an action.
@@ -235,12 +221,6 @@ pub struct PreviewDetails {
 pub enum PreviewMessage {
     /// An action was triggered
     ActionTriggered(ActionId),
-    /// Content finished loading successfully
-    Loaded,
-    /// Content failed to load
-    LoadError(String),
-    /// Request to open a file (e.g., from drag-and-drop within the preview)
-    OpenFile(PathBuf),
 }
 
 // ============================================================================

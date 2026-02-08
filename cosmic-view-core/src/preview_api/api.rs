@@ -24,8 +24,6 @@
 //! ```
 
 use std::path::Path;
-#[cfg(feature = "view3d")]
-use std::sync::Arc;
 
 use cosmic::widget;
 use cosmic::Element;
@@ -41,24 +39,9 @@ use cosmic_view_directory::DirectoryViewer;
 use cosmic_view_fallback::FallbackViewer;
 use cosmic_view_types::{ContentViewer, LoadConfig};
 
-// PDF loader (not yet moved to its own crate)
-#[cfg(feature = "pdf")]
-use crate::loaders::pdf::{get_pdf_info, render_pdf_pages_limited};
-use crate::loaders::pdf::PdfInfo;
-
-// 3D model support
-#[cfg(feature = "view3d")]
-use cosmic_view_3d::{load_model, SceneData};
-
 use crate::types::{ContentFit, LoadedContent};
 use crate::util::mime::detect_mime;
 use super::details::generate_details;
-
-// Type alias for 3D scene - either Arc<SceneData> or () depending on feature
-#[cfg(feature = "view3d")]
-pub type ModelScene = std::sync::Arc<SceneData>;
-#[cfg(not(feature = "view3d"))]
-pub type ModelScene = ();
 
 // Import types from sub-modules
 use super::state::PreviewState;
@@ -102,9 +85,9 @@ impl Previewer {
             let kind = PreviewKind::from(mime_info.category);
 
             // Load content based on type
-            let (content, model_scene) = Self::load_content(&path, kind, &config);
+            let content = Self::load_content(&path, kind, &config);
 
-            PreviewState::new(path, kind, content, model_scene, config)
+            PreviewState::new(path, kind, content, config)
         })
         .await
         .unwrap_or_else(|e| {
@@ -119,7 +102,7 @@ impl Previewer {
         path: &Path,
         kind: PreviewKind,
         config: &PreviewConfig,
-    ) -> (LoadedContent, Option<ModelScene>) {
+    ) -> LoadedContent {
         match kind {
             #[cfg(feature = "image")]
             PreviewKind::Image => Self::load_image(path, config),
@@ -127,8 +110,6 @@ impl Previewer {
             PreviewKind::Svg => Self::load_svg(path, config),
             #[cfg(feature = "text")]
             PreviewKind::Text => Self::load_text(path, config),
-            PreviewKind::Pdf => Self::load_pdf(path, config),
-            PreviewKind::Model3D => Self::load_model_content(path),
             #[cfg(feature = "directory")]
             PreviewKind::Directory => Self::load_folder_content(path),
             #[cfg(feature = "fallback")]
@@ -141,7 +122,7 @@ impl Previewer {
             #[cfg(not(feature = "directory"))]
             PreviewKind::Directory => Self::load_fallback_content(path),
             #[cfg(not(feature = "fallback"))]
-            PreviewKind::Fallback => (LoadedContent::Error("Fallback viewer not available".to_string()), None),
+            PreviewKind::Fallback => LoadedContent::Error("Fallback viewer not available".to_string()),
         }
     }
 
@@ -161,9 +142,9 @@ impl Previewer {
     }
 
     #[cfg(feature = "image")]
-    fn load_image(path: &Path, config: &PreviewConfig) -> (LoadedContent, Option<ModelScene>) {
+    fn load_image(path: &Path, config: &PreviewConfig) -> LoadedContent {
         if let Err(e) = Self::check_file_size(path, config) {
-            return (LoadedContent::Error(e), None);
+            return LoadedContent::Error(e);
         }
 
         let load_config = LoadConfig {
@@ -182,27 +163,27 @@ impl Previewer {
             Ok((content, info)) => {
                 match content {
                     cosmic_view_image::ImageContent::Raster { handle } => {
-                        (LoadedContent::Raster { handle, info }, None)
+                        LoadedContent::Raster { handle, info }
                     }
                     cosmic_view_image::ImageContent::Svg { handle } => {
-                        (LoadedContent::Svg { handle, info }, None)
+                        LoadedContent::Svg { handle, info }
                     }
                 }
             }
-            Err(e) => (LoadedContent::Error(format!("Failed to load image: {}", e.0)), None),
+            Err(e) => LoadedContent::Error(format!("Failed to load image: {}", e.0)),
         }
     }
 
     #[cfg(feature = "image")]
-    fn load_svg(path: &Path, config: &PreviewConfig) -> (LoadedContent, Option<ModelScene>) {
+    fn load_svg(path: &Path, config: &PreviewConfig) -> LoadedContent {
         // SVG loading is handled by ImageViewer
         Self::load_image(path, config)
     }
 
     #[cfg(feature = "text")]
-    fn load_text(path: &Path, config: &PreviewConfig) -> (LoadedContent, Option<ModelScene>) {
+    fn load_text(path: &Path, config: &PreviewConfig) -> LoadedContent {
         if let Err(e) = Self::check_file_size(path, config) {
-            return (LoadedContent::Error(e), None);
+            return LoadedContent::Error(e);
         }
 
         let load_config = LoadConfig {
@@ -214,118 +195,43 @@ impl Previewer {
         // Use TextViewer from cosmic-view-text
         let rt = tokio::runtime::Handle::current();
         match rt.block_on(TextViewer::load(path, &load_config)) {
-            Ok((content, info)) => (LoadedContent::Text { content, info }, None),
-            Err(e) => (LoadedContent::Error(format!("Failed to load text: {}", e.0)), None),
+            Ok((content, info)) => LoadedContent::Text { content, info },
+            Err(e) => LoadedContent::Error(format!("Failed to load text: {}", e.0)),
         }
-    }
-
-    #[cfg(feature = "pdf")]
-    fn load_pdf(path: &Path, config: &PreviewConfig) -> (LoadedContent, Option<ModelScene>) {
-        if let Err(e) = Self::check_file_size(path, config) {
-            return (LoadedContent::Error(e), None);
-        }
-
-        let info = match get_pdf_info(path) {
-            Ok(info) => info,
-            Err(e) => {
-                return (
-                    LoadedContent::Error(format!("Failed to get PDF info: {}", e)),
-                    None,
-                )
-            }
-        };
-
-        // Render at 1.5x scale for good quality when displayed full-width
-        match render_pdf_pages_limited(path, 1.5, Some(10)) {
-            Ok(result) => {
-                let pages: Vec<widget::image::Handle> = result
-                    .pages
-                    .into_iter()
-                    .map(|page| {
-                        widget::image::Handle::from_rgba(page.width, page.height, page.pixels)
-                    })
-                    .collect();
-                let info = PdfInfo {
-                    rendered_pages: pages.len(),
-                    all_pages_rendered: result.all_rendered,
-                    ..info
-                };
-                (LoadedContent::Pdf { pages, info }, None)
-            }
-            Err(e) => (
-                LoadedContent::Error(format!("Failed to render PDF: {}", e)),
-                None,
-            ),
-        }
-    }
-
-    #[cfg(not(feature = "pdf"))]
-    fn load_pdf(path: &Path, _config: &PreviewConfig) -> (LoadedContent, Option<ModelScene>) {
-        // PDF feature not enabled, fall through to fallback
-        Self::load_fallback_content(path)
-    }
-
-    #[cfg(feature = "view3d")]
-    fn load_model_content(path: &Path) -> (LoadedContent, Option<ModelScene>) {
-        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-
-        match load_model(path) {
-            Ok(scene) => {
-                let info = scene.info(file_size);
-                let scene_arc = Arc::new(scene);
-                (
-                    LoadedContent::Model3D {
-                        scene: Box::new((*scene_arc).clone()),
-                        info,
-                    },
-                    Some(scene_arc),
-                )
-            }
-            Err(e) => (
-                LoadedContent::Error(format!("Failed to load model: {}", e)),
-                None,
-            ),
-        }
-    }
-
-    #[cfg(not(feature = "view3d"))]
-    fn load_model_content(path: &Path) -> (LoadedContent, Option<ModelScene>) {
-        // 3D model feature not enabled, fall through to fallback
-        Self::load_fallback_content(path)
     }
 
     #[cfg(feature = "directory")]
-    fn load_folder_content(path: &Path) -> (LoadedContent, Option<ModelScene>) {
+    fn load_folder_content(path: &Path) -> LoadedContent {
         let load_config = LoadConfig::default();
 
         // Use DirectoryViewer from cosmic-view-directory
         let rt = tokio::runtime::Handle::current();
         match rt.block_on(DirectoryViewer::load(path, &load_config)) {
-            Ok((content, info)) => (LoadedContent::Folder { content, info }, None),
-            Err(e) => (LoadedContent::Error(format!("Failed to load folder: {}", e.0)), None),
+            Ok((content, info)) => LoadedContent::Folder { content, info },
+            Err(e) => LoadedContent::Error(format!("Failed to load folder: {}", e.0)),
         }
     }
 
     #[cfg(not(feature = "directory"))]
-    fn load_folder_content(_path: &Path) -> (LoadedContent, Option<ModelScene>) {
-        (LoadedContent::Error("Directory viewer not available".to_string()), None)
+    fn load_folder_content(_path: &Path) -> LoadedContent {
+        LoadedContent::Error("Directory viewer not available".to_string())
     }
 
     #[cfg(feature = "fallback")]
-    fn load_fallback_content(path: &Path) -> (LoadedContent, Option<ModelScene>) {
+    fn load_fallback_content(path: &Path) -> LoadedContent {
         let load_config = LoadConfig::default();
 
         // Use FallbackViewer from cosmic-view-fallback
         let rt = tokio::runtime::Handle::current();
         match rt.block_on(FallbackViewer::load(path, &load_config)) {
-            Ok((content, info)) => (LoadedContent::Fallback { content, info }, None),
-            Err(e) => (LoadedContent::Error(format!("Failed to load fallback: {}", e.0)), None),
+            Ok((content, info)) => LoadedContent::Fallback { content, info },
+            Err(e) => LoadedContent::Error(format!("Failed to load fallback: {}", e.0)),
         }
     }
 
     #[cfg(not(feature = "fallback"))]
-    fn load_fallback_content(_path: &Path) -> (LoadedContent, Option<ModelScene>) {
-        (LoadedContent::Error("Fallback viewer not available".to_string()), None)
+    fn load_fallback_content(_path: &Path) -> LoadedContent {
+        LoadedContent::Error("Fallback viewer not available".to_string())
     }
 
     // ------------------------------------------------------------------------
@@ -335,7 +241,7 @@ impl Previewer {
     /// Get the widget for rendering the preview.
     ///
     /// The widget is self-contained and handles mouse interaction internally
-    /// (zoom, pan, 3D rotation). Apps should embed this widget directly.
+    /// (zoom, pan). Apps should embed this widget directly.
     ///
     /// # Arguments
     /// * `state` - The preview state to render
@@ -357,17 +263,6 @@ impl Previewer {
 
             #[cfg(feature = "text")]
             LoadedContent::Text { content, .. } => Self::text_view(content),
-
-            LoadedContent::Pdf { pages, .. } => Self::pdf_view(pages),
-
-            #[cfg(feature = "view3d")]
-            LoadedContent::Model3D { .. } => {
-                if let Some(scene) = state.model_scene() {
-                    Self::model_view(scene.clone(), state.model_config(), state.background_alpha())
-                } else {
-                    Self::error_view("Failed to initialize 3D scene")
-                }
-            }
 
             #[cfg(feature = "fallback")]
             LoadedContent::Fallback { content, info } => {
@@ -428,64 +323,6 @@ impl Previewer {
         cosmic_view_text::syntax_text(&content.buffer).into()
     }
 
-    fn pdf_view<'a, M: 'static>(pages: &[widget::image::Handle]) -> Element<'a, M> {
-        // Show all pages in a scrollable view, centered horizontally
-        let mut column = widget::column()
-            .spacing(16)
-            .align_x(cosmic::iced::Alignment::Center);
-
-        for page in pages {
-            // Each page scales to fit width while maintaining aspect ratio
-            // Wrap in centered container so it's centered when window is wider than PDF
-            let image = widget::container(
-                widget::image(page.clone())
-                    .content_fit(cosmic::iced::ContentFit::ScaleDown),
-            )
-            .width(cosmic::iced::Length::Fill)
-            .align_x(cosmic::iced::alignment::Horizontal::Center);
-
-            column = column.push(image);
-        }
-
-        // Wrap column in a centered container inside the scrollable
-        widget::scrollable(
-            widget::container(column)
-                .width(cosmic::iced::Length::Fill)
-                .align_x(cosmic::iced::alignment::Horizontal::Center),
-        )
-        .width(cosmic::iced::Length::Fill)
-        .height(cosmic::iced::Length::Fill)
-        .into()
-    }
-
-    #[cfg(feature = "view3d")]
-    fn model_view<'a, M: Clone + 'static>(
-        scene: std::sync::Arc<SceneData>,
-        config: &cosmic_view_3d::Model3DViewerConfig,
-        bg_alpha: f32,
-    ) -> Element<'a, M> {
-        let theme = cosmic::theme::active();
-        let cosmic_theme = theme.cosmic();
-        let bg = cosmic_theme.bg_color();
-        let accent = cosmic_theme.accent_color();
-
-        // When bg_alpha < 1.0 (gallery/overlay context), use transparent background (0.0)
-        // so the gallery container's overlay shows through. The container provides the
-        // consistent background; we just render the 3D content on top.
-        // When bg_alpha = 1.0 (standalone/full view), use the theme's background color.
-        let effective_alpha = if bg_alpha < 1.0 { 0.0 } else { bg_alpha };
-
-        let themed_config = cosmic_view_3d::Model3DViewerConfig {
-            background_color: [bg.red, bg.green, bg.blue, effective_alpha],
-            object_color: [accent.red, accent.green, accent.blue],
-            show_textures: config.show_textures,
-            show_mesh: config.show_mesh,
-            show_wireframe: config.show_wireframe,
-        };
-
-        cosmic_view_3d::model_viewer(scene, Some(themed_config))
-    }
-
     fn error_view<M: 'static>(message: &str) -> Element<'static, M> {
         let message = message.to_string();
         widget::container(
@@ -517,9 +354,6 @@ impl Previewer {
     pub fn update(state: &mut PreviewState, message: PreviewMessage) -> bool {
         match message {
             PreviewMessage::ActionTriggered(action_id) => Self::execute_action(state, action_id),
-            PreviewMessage::Loaded => false,
-            PreviewMessage::LoadError(_) => false,
-            PreviewMessage::OpenFile(_) => false, // App should handle this
         }
     }
 
@@ -545,31 +379,6 @@ impl Previewer {
                 state.reset_transform();
                 true
             }
-            #[cfg(feature = "view3d")]
-            ActionId::ToggleTextures => {
-                state.model_config_mut().show_textures = !state.model_config().show_textures;
-                true
-            }
-            #[cfg(feature = "view3d")]
-            ActionId::ToggleMesh => {
-                state.model_config_mut().show_mesh = !state.model_config().show_mesh;
-                true
-            }
-            #[cfg(feature = "view3d")]
-            ActionId::ToggleWireframe => {
-                state.model_config_mut().show_wireframe = !state.model_config().show_wireframe;
-                true
-            }
-            #[cfg(feature = "view3d")]
-            ActionId::ResetCamera => {
-                // Camera reset is handled internally by the 3D widget
-                false
-            }
-            // When view3d is disabled, these actions do nothing
-            #[cfg(not(feature = "view3d"))]
-            ActionId::ToggleTextures | ActionId::ToggleMesh | ActionId::ToggleWireframe | ActionId::ResetCamera => {
-                false
-            }
         }
     }
 
@@ -584,32 +393,30 @@ impl Previewer {
     pub fn actions(state: &PreviewState) -> Vec<PreviewAction> {
         let mut actions = Vec::new();
 
-        // Zoom actions for 2D content (3D has its own camera, PDF has no zoom for now)
-        if state.kind() != PreviewKind::Model3D && state.kind() != PreviewKind::Pdf {
-            actions.push(PreviewAction {
-                id: ActionId::ZoomIn,
-                label: "Zoom In".to_string(),
-                shortcut: Some("+".to_string()),
-                state: ActionState::Trigger,
-                icon: Some("zoom-in-symbolic".to_string()),
-            });
-            actions.push(PreviewAction {
-                id: ActionId::ZoomOut,
-                label: "Zoom Out".to_string(),
-                shortcut: Some("-".to_string()),
-                state: ActionState::Trigger,
-                icon: Some("zoom-out-symbolic".to_string()),
-            });
-            actions.push(PreviewAction {
-                id: ActionId::ZoomReset,
-                label: "Reset Zoom".to_string(),
-                shortcut: Some("0".to_string()),
-                state: ActionState::Value {
-                    current: state.transform().format_zoom(),
-                },
-                icon: Some("zoom-original-symbolic".to_string()),
-            });
-        }
+        // Zoom actions for 2D content
+        actions.push(PreviewAction {
+            id: ActionId::ZoomIn,
+            label: "Zoom In".to_string(),
+            shortcut: Some("+".to_string()),
+            state: ActionState::Trigger,
+            icon: Some("zoom-in-symbolic".to_string()),
+        });
+        actions.push(PreviewAction {
+            id: ActionId::ZoomOut,
+            label: "Zoom Out".to_string(),
+            shortcut: Some("-".to_string()),
+            state: ActionState::Trigger,
+            icon: Some("zoom-out-symbolic".to_string()),
+        });
+        actions.push(PreviewAction {
+            id: ActionId::ZoomReset,
+            label: "Reset Zoom".to_string(),
+            shortcut: Some("0".to_string()),
+            state: ActionState::Value {
+                current: state.transform().format_zoom(),
+            },
+            icon: Some("zoom-original-symbolic".to_string()),
+        });
 
         // Content-specific actions
         match state.kind() {
@@ -621,43 +428,6 @@ impl Previewer {
                     state: ActionState::Trigger,
                     icon: Some("zoom-fit-best-symbolic".to_string()),
                 });
-            }
-            PreviewKind::Pdf => {
-                // PDF has no zoom actions for now
-            }
-            #[cfg(feature = "view3d")]
-            PreviewKind::Model3D => {
-                actions.push(PreviewAction {
-                    id: ActionId::ToggleTextures,
-                    label: "Show Textures".to_string(),
-                    shortcut: Some("T".to_string()),
-                    state: ActionState::Toggle {
-                        enabled: state.model_config().show_textures,
-                    },
-                    icon: None,
-                });
-                actions.push(PreviewAction {
-                    id: ActionId::ToggleMesh,
-                    label: "Show Mesh".to_string(),
-                    shortcut: Some("M".to_string()),
-                    state: ActionState::Toggle {
-                        enabled: state.model_config().show_mesh,
-                    },
-                    icon: None,
-                });
-                actions.push(PreviewAction {
-                    id: ActionId::ToggleWireframe,
-                    label: "Show Wireframe".to_string(),
-                    shortcut: Some("W".to_string()),
-                    state: ActionState::Toggle {
-                        enabled: state.model_config().show_wireframe,
-                    },
-                    icon: None,
-                });
-            }
-            #[cfg(not(feature = "view3d"))]
-            PreviewKind::Model3D => {
-                // Model3D actions not available when view3d feature is disabled
             }
             PreviewKind::Directory | PreviewKind::Fallback => {
                 // No special actions for directories/fallback
@@ -676,144 +446,6 @@ impl Previewer {
     /// Returns structured detail sections that apps can render in their own style.
     pub fn details(state: &PreviewState) -> PreviewDetails {
         generate_details(state)
-    }
-
-    // ------------------------------------------------------------------------
-    // Convenience accessors (delegate to PreviewState methods)
-    // ------------------------------------------------------------------------
-
-    /// Get the file path being previewed.
-    pub fn path(state: &PreviewState) -> &std::path::Path {
-        state.path()
-    }
-
-    /// Get the kind of content being previewed.
-    pub fn kind(state: &PreviewState) -> PreviewKind {
-        state.kind()
-    }
-
-    /// Check if content is still loading.
-    pub fn is_loading(state: &PreviewState) -> bool {
-        state.is_loading()
-    }
-
-    /// Get error message if loading failed.
-    pub fn error(state: &PreviewState) -> Option<&str> {
-        state.error()
-    }
-
-    /// Get the current content fit mode.
-    pub fn content_fit(state: &PreviewState) -> ContentFit {
-        state.content_fit()
-    }
-
-    /// Get the current view transform.
-    pub fn transform(state: &PreviewState) -> &crate::types::ViewTransform {
-        state.transform()
-    }
-
-    /// Get the 3D model configuration (if applicable).
-    #[cfg(feature = "view3d")]
-    pub fn model_config(state: &PreviewState) -> &cosmic_view_3d::Model3DViewerConfig {
-        state.model_config()
-    }
-
-    /// Set the background alpha.
-    pub fn set_background_alpha(state: &mut PreviewState, alpha: f32) {
-        state.set_background_alpha(alpha);
-    }
-
-    /// Get access to the 3D scene data (if applicable).
-    #[cfg(feature = "view3d")]
-    pub fn model_scene(state: &PreviewState) -> Option<&Arc<SceneData>> {
-        state.model_scene()
-    }
-
-    /// Get access to the loaded content.
-    pub fn content(state: &PreviewState) -> &LoadedContent {
-        state.content()
-    }
-
-    /// Create an empty/not-loaded preview state.
-    pub fn empty() -> PreviewState {
-        PreviewState::empty()
-    }
-
-    /// Check if any content is currently loaded (not NotLoaded or Loading).
-    pub fn has_content(state: &PreviewState) -> bool {
-        state.has_content()
-    }
-
-    /// Set the content directly (for use by loading handlers).
-    pub fn set_content(
-        state: &mut PreviewState,
-        path: std::path::PathBuf,
-        content: LoadedContent,
-    ) {
-        state.set_content(path, content);
-    }
-
-    /// Set the state to loading.
-    pub fn set_loading(state: &mut PreviewState) {
-        state.set_loading();
-    }
-
-    /// Set an error state.
-    pub fn set_error(state: &mut PreviewState, error: String) {
-        state.set_error(error);
-    }
-
-    /// Reset the view transform to default.
-    pub fn reset_transform(state: &mut PreviewState) {
-        state.reset_transform();
-    }
-
-    /// Set the 3D model scene data.
-    #[cfg(feature = "view3d")]
-    pub fn set_model_scene(state: &mut PreviewState, scene: Arc<SceneData>) {
-        state.set_model_scene(scene);
-    }
-
-    /// Clear the 3D model scene data.
-    #[cfg(feature = "view3d")]
-    pub fn clear_model_scene(state: &mut PreviewState) {
-        state.clear_model_scene();
-    }
-
-    /// Set the current path being previewed (without changing content).
-    pub fn set_path(state: &mut PreviewState, path: std::path::PathBuf) {
-        state.set_path(path);
-    }
-
-    /// Get a mutable reference to the model configuration.
-    #[cfg(feature = "view3d")]
-    pub fn model_config_mut(state: &mut PreviewState) -> &mut cosmic_view_3d::Model3DViewerConfig {
-        state.model_config_mut()
-    }
-
-    /// Get a mutable reference to the content fit mode.
-    pub fn content_fit_mut(state: &mut PreviewState) -> &mut ContentFit {
-        state.content_fit_mut()
-    }
-
-    /// Get a mutable reference to the view transform.
-    pub fn transform_mut(state: &mut PreviewState) -> &mut crate::types::ViewTransform {
-        state.transform_mut()
-    }
-
-    /// Get the PDF info (if available).
-    pub fn pdf_info(state: &PreviewState) -> Option<&PdfInfo> {
-        state.pdf_info()
-    }
-
-    /// Get a mutable reference to PDF info (if available).
-    pub fn pdf_info_mut(state: &mut PreviewState) -> Option<&mut PdfInfo> {
-        state.pdf_info_mut()
-    }
-
-    /// Set the PDF info.
-    pub fn set_pdf_info(state: &mut PreviewState, info: Option<PdfInfo>) {
-        state.set_pdf_info(info);
     }
 
     // ------------------------------------------------------------------------
@@ -985,8 +617,6 @@ impl Previewer {
 
         match mime_info.category {
             FileCategory::Image | FileCategory::Svg => Self::render_image_thumbnail(path, config),
-            FileCategory::Pdf => Self::render_pdf_thumbnail(path, config),
-            FileCategory::Model3D => Self::render_model_thumbnail(path, config),
             FileCategory::Text | FileCategory::Directory | FileCategory::Unknown => {
                 Err("Unsupported file type for thumbnail rendering".to_string())
             }
@@ -1008,70 +638,5 @@ impl Previewer {
         _config: &super::types::ThumbnailRenderConfig,
     ) -> Result<(u32, u32, Vec<u8>), String> {
         Err("Image thumbnail support requires the 'image' feature".to_string())
-    }
-
-    /// Render a PDF first page to thumbnail pixels.
-    #[cfg(all(feature = "pdf", feature = "image"))]
-    fn render_pdf_thumbnail(
-        path: &Path,
-        config: &super::types::ThumbnailRenderConfig,
-    ) -> Result<(u32, u32, Vec<u8>), String> {
-        use crate::loaders::pdf::render_pdf_page;
-
-        // Render first page at 0.5 scale, then resize if needed
-        let (width, height, pixels) = render_pdf_page(path, 0, 0.5)?;
-
-        // Resize using cosmic-view-image's utility
-        cosmic_view_image::resize_rgba(width, height, pixels, config.max_size)
-    }
-
-    #[cfg(all(feature = "pdf", not(feature = "image")))]
-    fn render_pdf_thumbnail(
-        path: &Path,
-        _config: &super::types::ThumbnailRenderConfig,
-    ) -> Result<(u32, u32, Vec<u8>), String> {
-        use crate::loaders::pdf::render_pdf_page;
-
-        // Without image feature, just return the rendered page without resizing
-        render_pdf_page(path, 0, 0.5)
-    }
-
-    #[cfg(not(feature = "pdf"))]
-    fn render_pdf_thumbnail(
-        _path: &Path,
-        _config: &super::types::ThumbnailRenderConfig,
-    ) -> Result<(u32, u32, Vec<u8>), String> {
-        Err("PDF thumbnail support requires the 'pdf' feature".to_string())
-    }
-
-    /// Render a 3D model to thumbnail pixels.
-    #[cfg(feature = "view3d")]
-    fn render_model_thumbnail(
-        path: &Path,
-        config: &super::types::ThumbnailRenderConfig,
-    ) -> Result<(u32, u32, Vec<u8>), String> {
-        let scene = cosmic_view_3d::load_model(path)
-            .map_err(|e| format!("Failed to load 3D model: {}", e))?;
-
-        // Choose background based on themed setting
-        let bg_color = if config.themed {
-            let theme = cosmic::theme::active();
-            let cosmic_theme = theme.cosmic();
-            let bg = cosmic_theme.bg_color();
-            [bg.red, bg.green, bg.blue, 1.0]
-        } else {
-            // Neutral dark gray background for theme-independent thumbnails
-            [0.1, 0.1, 0.12, 1.0]
-        };
-
-        cosmic_view_3d::render_model_thumbnail(&scene, config.max_size, config.max_size, bg_color)
-    }
-
-    #[cfg(not(feature = "view3d"))]
-    fn render_model_thumbnail(
-        _path: &Path,
-        _config: &super::types::ThumbnailRenderConfig,
-    ) -> Result<(u32, u32, Vec<u8>), String> {
-        Err("3D model thumbnail support requires the 'view3d' feature".to_string())
     }
 }

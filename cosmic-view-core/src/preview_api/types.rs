@@ -21,8 +21,6 @@ impl From<FileCategory> for PreviewKind {
             FileCategory::Image => PreviewKind::Image,
             FileCategory::Svg => PreviewKind::Svg,
             FileCategory::Text => PreviewKind::Text,
-            FileCategory::Pdf => PreviewKind::Pdf,
-            FileCategory::Model3D => PreviewKind::Model3D,
             FileCategory::Directory => PreviewKind::Directory,
             FileCategory::Unknown => PreviewKind::Fallback,
         }
@@ -42,8 +40,6 @@ mod tests {
         assert_eq!(PreviewKind::from(FileCategory::Image), PreviewKind::Image);
         assert_eq!(PreviewKind::from(FileCategory::Svg), PreviewKind::Svg);
         assert_eq!(PreviewKind::from(FileCategory::Text), PreviewKind::Text);
-        assert_eq!(PreviewKind::from(FileCategory::Pdf), PreviewKind::Pdf);
-        assert_eq!(PreviewKind::from(FileCategory::Model3D), PreviewKind::Model3D);
         assert_eq!(PreviewKind::from(FileCategory::Directory), PreviewKind::Directory);
         assert_eq!(PreviewKind::from(FileCategory::Unknown), PreviewKind::Fallback);
     }

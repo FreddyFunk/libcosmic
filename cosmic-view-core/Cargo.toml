@@ -15,10 +15,6 @@ text = ["dep:cosmic-view-text"]
 directory = ["dep:cosmic-view-directory"]
 # Enable fallback viewer for unsupported files
 fallback = ["dep:cosmic-view-fallback"]
-# Enable PDF viewer (requires pdfium)
-pdf = []
-# Enable 3D model viewer (requires cosmic-view-3d crate)
-view3d = []
 
 [dependencies]
 cosmic-view-types = { path = "../cosmic-view-types" }
