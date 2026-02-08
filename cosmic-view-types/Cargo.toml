@@ -3,7 +3,7 @@ name = "cosmic-view-types"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "Shared types and traits for COSMIC view components"
+description = "ContentViewer trait and shared types for modular file preview components"
 
 [dependencies]
 chrono = "0.4"

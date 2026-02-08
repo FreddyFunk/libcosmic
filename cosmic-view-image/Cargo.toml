@@ -3,7 +3,7 @@ name = "cosmic-view-image"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "Image viewer with raster and SVG support for COSMIC desktop applications"
+description = "Image preview supporting raster, SVG, and JPEG XL formats with thumbnail generation"
 
 [dependencies]
 cosmic-view-types = { path = "../cosmic-view-types" }

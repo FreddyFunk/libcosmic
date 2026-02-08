@@ -3,7 +3,7 @@ name = "cosmic-view-core"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "Core preview/image viewing library for COSMIC desktop applications"
+description = "Modular file preview system orchestrating viewer components for COSMIC"
 
 [features]
 default = ["image", "text", "directory", "fallback"]

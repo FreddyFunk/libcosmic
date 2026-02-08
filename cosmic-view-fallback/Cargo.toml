@@ -3,7 +3,7 @@ name = "cosmic-view-fallback"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "Fallback file viewer for COSMIC desktop applications"
+description = "Generic file icon preview for unsupported file types"
 
 [dependencies]
 cosmic-view-types = { path = "../cosmic-view-types" }

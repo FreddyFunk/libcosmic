@@ -3,7 +3,7 @@ name = "cosmic-view-text"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "Text file viewer with syntax highlighting for COSMIC desktop applications"
+description = "Text file preview with syntax highlighting"
 
 [dependencies]
 cosmic-view-types = { path = "../cosmic-view-types" }
